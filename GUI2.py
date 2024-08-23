@@ -118,7 +118,16 @@ class SettingsPanel(QWidget):
         self.config_path = find_config_file()
         self.config_data = self.load_config()
         self.set_styles()
+        self.tooltips = {
+            "show_plots": "Plot the results.",
+            "filter": "Apply a filter to the data.",
+            "show_angles_on_img": "Display angles on the image.",
+            "show_angles_on_vid": "Display angles on the video.",
+            "flip_left_right": "Same angles whether the participant faces left/right./n" "Set it to false if you want timeseries to be continuous even when the participent switches their stance."
+        }
         self.setup_ui()
+
+
 
     def load_config(self):
         return toml.load(self.config_path)
@@ -176,14 +185,14 @@ class SettingsPanel(QWidget):
 
         # Display Detection
         self.display_detection_checkbox = QCheckBox("Display Detection")
-        self.display_detection_checkbox.setStyleSheet(self.checkbox_style())
+        self.display_detection_checkbox.setStyleSheet(self.font_adjustment())
         self.display_detection_checkbox.setChecked(self.config_data['pose']['display_detection'])
         self.display_detection_checkbox.setToolTip("Show processing of the pose detection.")
         layout.addWidget(self.display_detection_checkbox)
 
         # Time Range
         time_range_label = QLabel("Time Range:")
-        time_range_label.setStyleSheet("color: white; font-size: 14px;")
+        time_range_label.setStyleSheet(self.font_adjustment())
         time_range_label.setToolTip("Set the time range for the analysis.")
         layout.addWidget(time_range_label)
 
@@ -200,7 +209,7 @@ class SettingsPanel(QWidget):
 
         # Joint Angles
         joint_angles_label = QLabel("Select Joint Angles:")
-        joint_angles_label.setStyleSheet("color: white; font-size: 14px;")
+        joint_angles_label.setStyleSheet(self.font_adjustment())
         joint_angles_label.setToolTip("Choose the joint angles you want to compute")
         layout.addWidget(joint_angles_label)
 
@@ -220,7 +229,7 @@ class SettingsPanel(QWidget):
 
         # Segment Angles
         segment_angles_label = QLabel("Select Segment Angles:")
-        segment_angles_label.setStyleSheet("color: white; font-size: 14px;")
+        segment_angles_label.setStyleSheet(self.font_adjustment())
         segment_angles_label.setToolTip("Choose the segment angles you want to compute")
         layout.addWidget(segment_angles_label)
 
@@ -244,6 +253,13 @@ class SettingsPanel(QWidget):
         layout = QFormLayout()
         layout.setVerticalSpacing(10)
 
+        # Overwrite Pose
+        self.overwrite_pose = QCheckBox("Overwrite existing pose data")
+        self.overwrite_pose.setStyleSheet(self.font_adjustment())
+        self.overwrite_pose.setChecked(self.config_data['pose_advanced']['overwrite_pose'])
+        self.overwrite_pose.setToolTip("If unchecked, don't run pose detection again if JSON pose files are found.")
+        layout.addRow(self.overwrite_pose)
+
         # Webcam ID
         self.webcam_id = QSpinBox()
         self.webcam_id.setStyleSheet(self.spinbox_style())
@@ -255,26 +271,36 @@ class SettingsPanel(QWidget):
         input_size_layout = QHBoxLayout()
         self.input_width = QSpinBox()
         self.input_height = QSpinBox()
+        self.auto_checkbox = QCheckBox("Auto")
+        self.auto_checkbox.setStyleSheet(self.font_adjustment() + "padding-left: 20px;")
+
         for spinbox in (self.input_width, self.input_height):
             spinbox.setRange(1, 10000)
             spinbox.setStyleSheet(self.spinbox_style())
-            spinbox.setToolTip("For only webcam, set the input size of the webcam./n"
-                                "If empty, the default input size is maximum resolution of the webcam.")
+            spinbox.setToolTip("For only webcam, set the input size of the webcam.\n"
+                                "If 'Auto' is selected, input size will be set to 'auto'. Otherwise, specify the size manually.")
         current_input_size = self.config_data['pose_advanced']['input_size']
-        self.input_width.setValue(current_input_size[0])
-        self.input_height.setValue(current_input_size[1])
+
+        # 설정된 값이 'auto'라면 체크박스를 선택 상태로 만듦
+        if current_input_size == "auto":
+            self.auto_checkbox.setChecked(True)
+            self.input_width.setEnabled(False)
+            self.input_height.setEnabled(False)
+        else:
+            self.input_width.setValue(current_input_size[0])
+            self.input_height.setValue(current_input_size[1])
+            self.auto_checkbox.setChecked(False)
+
         input_size_layout.addWidget(QLabel("Width:"))
         input_size_layout.addWidget(self.input_width)
         input_size_layout.addWidget(QLabel("Height:"))
         input_size_layout.addWidget(self.input_height)
+        input_size_layout.addWidget(self.auto_checkbox)
         layout.addRow(self.create_label("Input Size:"), input_size_layout)
 
-        # Overwrite Pose
-        self.overwrite_pose = QCheckBox("Overwrite existing pose data")
-        self.overwrite_pose.setStyleSheet(self.checkbox_style())
-        self.overwrite_pose.setChecked(self.config_data['pose_advanced']['overwrite_pose'])
-        self.overwrite_pose.setToolTip("If unchecked, don't run pose detection again if JSON pose files are found.")
-        layout.addRow(self.overwrite_pose)
+        # "Auto" 체크박스의 상태가 변경될 때 실행되는 함수 연결
+        self.auto_checkbox.stateChanged.connect(self.toggle_auto_mode)
+
 
         # Mode
         self.mode = QComboBox()
@@ -286,7 +312,7 @@ class SettingsPanel(QWidget):
 
         # Detection Frequency
         self.det_frequency = QSlider(Qt.Horizontal)
-        self.det_frequency.setRange(1, 30)
+        self.det_frequency.setRange(1, 240)
         self.det_frequency.setValue(self.config_data['pose_advanced']['det_frequency'])
         self.det_frequency.setStyleSheet(self.slider_style())
         self.det_frequency_label = QLabel(f"Detection Frequency: {self.det_frequency.value()}")
@@ -306,52 +332,64 @@ class SettingsPanel(QWidget):
         self.keypoints_threshold.setToolTip("Increase this if only part of a person is on screen to ensure only correctly detected keypoints are used.")
         layout.addRow(self.keypoints_threshold_label, self.keypoints_threshold)
 
-        group.content_layout.addLayout(layout)
-
-    def setup_advanced_angles_settings(self, group):
-        layout = QFormLayout()
-        layout.setVerticalSpacing(10)
-
-        checkboxes = [
-            ("show_angles_on_img", "Show Angles on Image"),
-            ("show_angles_on_vid", "Show Angles on Video"),
-            ("filter", "Apply Filter"),
-            ("show_plots", "Show Plots"),
-            ("flip_left_right", "Flip Left/Right")
-        ]
-
-        for setting, label in checkboxes:
+        # Show plots and filter for advanced pose settings
+        checkboxes_pose = [("show_plots", "Show Plots"), 
+                        ("filter", "Apply Filter")]
+        for setting, label in checkboxes_pose:
             checkbox = QCheckBox(label)
-            checkbox.setStyleSheet(self.checkbox_style())
-            checkbox.setChecked(self.config_data['compute_angles_advanced'][setting])
-            if setting == "flip_left_right":
-                checkbox.setToolTip("Same angles whether the participant faces left/right. Uncheck for continuous timeseries when participant switches stance.")
+            checkbox.setStyleSheet(self.font_adjustment())
+            # 정확한 설정 항목 이름을 사용하여 체크 상태를 결정
+            checkbox.setChecked(self.config_data['pose_advanced'][setting])
+            checkbox.setToolTip(self.tooltips.get(setting, ""))
             layout.addRow(checkbox)
-            setattr(self, setting, checkbox)
+            setattr(self, f"pose_{setting}", checkbox)  # 변수 이름을 더 명확하게 변경
 
+        # Filter Type
         self.filter_type = QComboBox()
         self.filter_type.setStyleSheet(self.combobox_style())
         self.filter_type.addItems(["butterworth", "gaussian", "LOESS", "median"])
-        self.filter_type.setCurrentText(self.config_data['compute_angles_advanced']['filter_type'])
-        self.filter_type.setToolTip("Select the type of filter to apply to the angle data")
+        self.filter_type.setCurrentText(self.config_data['pose_advanced']['filter_type'])
+        self.filter_type.setToolTip("Select the type of filter to apply to the pose data")
         layout.addRow(self.create_label("Filter Type:"), self.filter_type)
 
         group.content_layout.addLayout(layout)
 
-
-
     def setup_advanced_angles_settings(self, group):
         layout = QFormLayout()
         layout.setVerticalSpacing(10)
 
-        for setting in ['show_angles_on_img', 'show_angles_on_vid', 'filter', 'show_plots', 'flip_left_right']:
-            checkbox = QCheckBox()
-            checkbox.setStyleSheet(self.checkbox_style())
+        checkboxes_ang = [("show_plots", "Show Plots"),
+                        ("filter", "Apply Filter"),
+                        ("show_angles_on_img", "Show Angles on Image"),
+                        ("show_angles_on_vid", "Show Angles on Video"),
+                        ("flip_left_right", "Flip Left/Right")]
+
+        for setting, label in checkboxes_ang:
+            checkbox = QCheckBox(label)
+            checkbox.setStyleSheet(self.font_adjustment())
+            # 정확한 설정 항목 이름을 사용하여 체크 상태를 결정
             checkbox.setChecked(self.config_data['compute_angles_advanced'][setting])
-            setattr(self, setting, checkbox)
-            layout.addRow(self.create_label(f"{setting.replace('_', ' ').title()}:"), checkbox)
+            if setting == "flip_left_right":
+                checkbox.setToolTip("Same angles whether the participant faces left/right. Uncheck for continuous timeseries when participant switches stance.")
+            layout.addRow(checkbox)
+            setattr(self, f"angles_{setting}", checkbox)  # 변수 이름을 더 명확하게 변경
+
+        self.filter_type_ang = QComboBox()
+        self.filter_type_ang.setStyleSheet(self.combobox_style())
+        self.filter_type_ang.addItems(["butterworth", "gaussian", "LOESS", "median"])
+        self.filter_type_ang.setCurrentText(self.config_data['compute_angles_advanced']['filter_type'])
+        self.filter_type_ang.setToolTip("Select the type of filter to apply to the angle data")
+        layout.addRow(self.create_label("Filter Type:"), self.filter_type_ang)
 
         group.content_layout.addLayout(layout)
+
+
+    def font_adjustment(self):
+        return """
+            font-size: 14px;
+            color: white;
+            font-weight: bold;
+        """
 
     def slider_style(self):
         return """
@@ -363,19 +401,30 @@ class SettingsPanel(QWidget):
             }
 
             QSlider::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
-                border: 1px solid #5c5c5c;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #4d4d4d, stop:1 #333333); 
+                border: 1px solid #333333; 
                 width: 18px;
                 margin: -2px 0;
                 border-radius: 3px;
             }
-        """
+            """
     
     def update_det_frequency_label(self, value):
         self.det_frequency_label.setText(f"Detection Frequency: {value}")
 
     def update_keypoints_threshold_label(self, value):
         self.keypoints_threshold_label.setText(f"Keypoints Threshold: {value / 100:.2f}")
+
+    
+    def toggle_auto_mode(self):
+        if self.auto_checkbox.isChecked():
+                # "Auto"가 체크된 경우, width와 height 입력을 비활성화
+            self.input_width.setEnabled(False)
+            self.input_height.setEnabled(False)
+        else:
+                # "Auto"가 체크 해제된 경우, width와 height 입력을 활성화
+            self.input_width.setEnabled(True)
+            self.input_height.setEnabled(True)
 
     def set_styles(self):
         # 툴팁 스타일과 폰트 스타일을 함께 설정
@@ -512,7 +561,7 @@ class SettingsPanel(QWidget):
     def apply_settings(self):
         # Basic Settings
         self.config_data['pose']['display_detection'] = self.display_detection_checkbox.isChecked()
-        
+
         time_range = [
             float(self.time_range_start.text()) if self.time_range_start.text() else None,
             float(self.time_range_end.text()) if self.time_range_end.text() else None
@@ -528,19 +577,35 @@ class SettingsPanel(QWidget):
 
         # Advanced Pose Settings
         self.config_data['pose_advanced']['webcam_id'] = self.webcam_id.value()
-        self.config_data['pose_advanced']['input_size'] = [self.input_width.value(), self.input_height.value()]
+        if self.auto_checkbox.isChecked():
+            self.config_data['pose_advanced']['input_size'] = "auto"
+        else:
+            self.config_data['pose_advanced']['input_size'] = [self.input_width.value(), self.input_height.value()]
         self.config_data['pose_advanced']['overwrite_pose'] = self.overwrite_pose.isChecked()
         self.config_data['pose_advanced']['det_frequency'] = self.det_frequency.value()
         self.config_data['pose_advanced']['mode'] = self.mode.currentText()
         self.config_data['pose_advanced']['keypoints_threshold'] = self.keypoints_threshold.value() / 100
+        self.config_data['pose_advanced']['show_plots'] = self.pose_show_plots.isChecked()
+        self.config_data['pose_advanced']['filter'] = self.pose_filter.isChecked()
+        self.config_data['pose_advanced']['filter_type'] = self.filter_type.currentText()
+
+        # Save advanced filter settings
+        for filter_name, settings in self.filter_settings.items():
+            for setting_name, spin_box in settings.items():
+                self.config_data['pose_advanced'][filter_name][setting_name] = spin_box.value()
 
         # Advanced Angles Settings
         self.config_data['compute_angles_advanced']['show_angles_on_img'] = self.show_angles_on_img.isChecked()
         self.config_data['compute_angles_advanced']['show_angles_on_vid'] = self.show_angles_on_vid.isChecked()
-        self.config_data['compute_angles_advanced']['filter'] = self.filter_checkbox.isChecked()
-        self.config_data['compute_angles_advanced']['show_plots'] = self.show_plots.isChecked()
+        self.config_data['compute_angles_advanced']['filter'] = self.angles_filter.isChecked()
+        self.config_data['compute_angles_advanced']['show_plots'] = self.angles_show_plots.isChecked()
         self.config_data['compute_angles_advanced']['flip_left_right'] = self.flip_left_right.isChecked()
-        self.config_data['compute_angles_advanced']['filter_type'] = self.filter_type.currentText()
+        self.config_data['compute_angles_advanced']['filter_type'] = self.filter_type_ang.currentText()
+
+        # Save advanced angles filter settings
+        for filter_name, settings in self.filter_settings_ang.items():
+            for setting_name, spin_box in settings.items():
+                self.config_data['compute_angles_advanced'][filter_name][setting_name] = spin_box.value()
 
         # Save updated config to file
         try:
@@ -704,7 +769,7 @@ class MainPanel(QWidget):
         new_size = self.size()
         
         gif_width = int(new_size.width() * 0.95)
-        gif_height = int(new_size.height() * 0.6)
+        gif_height = int(new_size.height() * 0.95)
         self.gif_movie.setScaledSize(QSize(gif_width, gif_height))
 
         super().resizeEvent(event)
@@ -713,7 +778,7 @@ class CustomStyleWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Sports2D")
-        self.resize(1200, 720)
+        self.resize(1024, 600)
         self.setMinimumSize(600, 400)
         self.current_theme = "Dark"
 
